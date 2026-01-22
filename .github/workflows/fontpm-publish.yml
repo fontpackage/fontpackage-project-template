@@ -91,20 +91,32 @@ jobs:
           echo "NPM_VERSION=$VERSION" >> $GITHUB_ENV
           echo "NPM_TAG=$NPM_TAG" >> $GITHUB_ENV
 
-      # ---------------------------------------------------------
+# ---------------------------------------------------------
       # 3. Configure package.json on the fly
       # ---------------------------------------------------------
       - name: Configure Package
         if: env.SKIP != 'true'
         run: |
-          # If you have a package.json in root, this updates the version
-          # If you don't, you can run `npm init -y` here first.
+          # 1. Create a fresh package.json
+          # REPLACE @YOUR-USERNAME WITH YOUR ACTUAL GITHUB USERNAME
+          npm init -y --scope=@YOUR-USERNAME
           
-          npm version ${{ env.NPM_VERSION }} --no-git-tag-version --allow-same-version
+          # 2. Configure necessary fields
+          npm pkg set description="Open source font build"
+          npm pkg set main="index.css"
+          npm pkg set style="index.css"
           
-          # Force the publish config to point to GitHub Packages
-          # (Alternatively ensure this is in your repo's package.json)
+          # 3. Tell npm exactly what files to include
+          # We need to include the 'dist' folder (where we unzipped fonts) 
+          # and 'index.css' (which we will generate next)
+          npm pkg set files[]="dist"
+          npm pkg set files[]="index.css"
+          
+          # 4. Set the registry to GitHub Packages
           npm pkg set publishConfig.registry="https://npm.pkg.github.com/"
+
+          # 5. NOW we can set the version
+          npm version ${{ env.NPM_VERSION }} --no-git-tag-version --allow-same-version
 
       # ---------------------------------------------------------
       # 4. Generate CSS (Optional but recommended)
