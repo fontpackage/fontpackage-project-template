@@ -1,0 +1,127 @@
+name: Publish NPM Package
+
+# Trigger this workflow ONLY after the "Build font and specimen" workflow completes
+on:
+  workflow_run:
+    workflows: ["Build font and specimen"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  npm-publish:
+    # Only run if the build was successful
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com/'
+          scope: '@YOUR-USERNAME' # REPALCE WITH YOUR GITHUB USERNAME
+
+      # ---------------------------------------------------------
+      # 1. Download Artifacts from the Triggering Workflow
+      # ---------------------------------------------------------
+      - name: Download Font Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ./dist-download
+      
+      # We need to find the specific zip/folder. 
+      # Since your build creates a zip named based on repo/env, we unzip it.
+      - name: Prepare Distribution Folder
+        run: |
+          mkdir dist
+          # Find the zip file in the download path and unzip contents to dist
+          find ./dist-download -name "*.zip" -exec unzip {} -d dist \;
+          # Ensure we have the fonts. Structure depends on your zip content.
+          ls -R dist
+
+      # ---------------------------------------------------------
+      # 2. Determine Channel & Version
+      # ---------------------------------------------------------
+      - name: Set Version and Channel
+        id: meta
+        run: |
+          # Get branch or tag name from the workflow that triggered this
+          REF_NAME=${{ github.event.workflow_run.head_branch }}
+          SHA_SHORT=$(echo ${{ github.event.workflow_run.head_sha }} | cut -c1-7)
+          DATE_STR=$(date +'%Y%m%d')
+
+          echo "Detected Ref: $REF_NAME"
+
+          if [[ "$REF_NAME" == v* ]]; then
+            # --- STABLE CHANNEL (Tagged v1.0.0) ---
+            VERSION=${REF_NAME#v} # Remove 'v'
+            NPM_TAG="latest"
+            echo "Channel: Stable"
+          
+          elif [[ "$REF_NAME" == "main" ]]; then
+            # --- NIGHTLY CHANNEL (Main Branch) ---
+            # Version format: 0.0.0-nightly-YYYYMMDD
+            # We use a placeholder base version so nightly is always 'pre-release'
+            VERSION="0.0.0-nightly-$DATE_STR"
+            NPM_TAG="nightly"
+            echo "Channel: Nightly"
+
+          elif [[ "$REF_NAME" == "dev" ]]; then
+            # --- DEV CHANNEL (Dev Branch) ---
+            # Version format: 0.0.0-dev-SHA
+            VERSION="0.0.0-dev-$SHA_SHORT"
+            NPM_TAG="dev"
+            echo "Channel: Dev"
+
+          else
+            echo "Skipping publish for ref: $REF_NAME"
+            echo "SKIP=true" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          echo "NPM_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "NPM_TAG=$NPM_TAG" >> $GITHUB_ENV
+
+      # ---------------------------------------------------------
+      # 3. Configure package.json on the fly
+      # ---------------------------------------------------------
+      - name: Configure Package
+        if: env.SKIP != 'true'
+        run: |
+          # If you have a package.json in root, this updates the version
+          # If you don't, you can run `npm init -y` here first.
+          
+          npm version ${{ env.NPM_VERSION }} --no-git-tag-version --allow-same-version
+          
+          # Force the publish config to point to GitHub Packages
+          # (Alternatively ensure this is in your repo's package.json)
+          npm pkg set publishConfig.registry="https://npm.pkg.github.com/"
+
+      # ---------------------------------------------------------
+      # 4. Generate CSS (Optional but recommended)
+      # ---------------------------------------------------------
+      - name: Generate CSS
+        if: env.SKIP != 'true'
+        run: |
+           # Create a basic CSS file mapping the fonts in 'dist'
+           # Add your node script here or run a simple shell loop
+           echo "/* Auto-generated font face */" > index.css
+
+      # ---------------------------------------------------------
+      # 5. Publish
+      # ---------------------------------------------------------
+      - name: Publish to GitHub Packages
+        if: env.SKIP != 'true'
+        # Add --dry-run. This runs everything but stops before uploading.
+        run: npm publish --tag ${{ env.NPM_TAG }} --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
