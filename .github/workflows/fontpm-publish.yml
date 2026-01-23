@@ -28,68 +28,42 @@ jobs:
           registry-url: 'https://npm.pkg.github.com/'
           scope: '@YOUR-USERNAME' # REPALCE WITH YOUR GITHUB USERNAME
 
+     # ---------------------------------------------------------
+      # 1. Download & Unzip
       # ---------------------------------------------------------
-      # 1. Download Artifacts from the Triggering Workflow
-      # ---------------------------------------------------------
-      - name: Download Font Artifacts
+      - name: Download and Unpack Artifacts
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: ./dist-download
-      
-      # We need to find the specific zip/folder. 
-      # Since your build creates a zip named based on repo/env, we unzip it.
+          path: ./temp_artifacts
+
       - name: Prepare Distribution Folder
         run: |
-          mkdir dist
-          # Find the zip file in the download path and unzip contents to dist
-          find ./dist-download -name "*.zip" -exec unzip {} -d dist \;
-          # Ensure we have the fonts. Structure depends on your zip content.
-          ls -R dist
-
-      # ---------------------------------------------------------
-      # 2. Determine Channel & Version
-      # ---------------------------------------------------------
-      - name: Set Version and Channel
-        id: meta
-        run: |
-          # Get branch or tag name from the workflow that triggered this
-          REF_NAME=${{ github.event.workflow_run.head_branch }}
-          SHA_SHORT=$(echo ${{ github.event.workflow_run.head_sha }} | cut -c1-7)
-          DATE_STR=$(date +'%Y%m%d')
-
-          echo "Detected Ref: $REF_NAME"
-
-          if [[ "$REF_NAME" == v* ]]; then
-            # --- STABLE CHANNEL (Tagged v1.0.0) ---
-            VERSION=${REF_NAME#v} # Remove 'v'
-            NPM_TAG="latest"
-            echo "Channel: Stable"
+          # 1. Create a clean dist folder
+          mkdir -p dist
           
-          elif [[ "$REF_NAME" == "main" ]]; then
-            # --- NIGHTLY CHANNEL (Main Branch) ---
-            # Version format: 0.0.0-nightly-YYYYMMDD
-            # We use a placeholder base version so nightly is always 'pre-release'
-            VERSION="0.0.0-nightly-$DATE_STR"
-            NPM_TAG="nightly"
-            echo "Channel: Nightly"
-
-          elif [[ "$REF_NAME" == "dev" ]]; then
-            # --- DEV CHANNEL (Dev Branch) ---
-            # Version format: 0.0.0-dev-SHA
-            VERSION="0.0.0-dev-$SHA_SHORT"
-            NPM_TAG="dev"
-            echo "Channel: Dev"
-
-          else
-            echo "Skipping publish for ref: $REF_NAME"
-            echo "SKIP=true" >> $GITHUB_ENV
-            exit 0
+          # 2. Unzip all found zip files into a temp folder
+          mkdir -p temp_unzip
+          find ./temp_artifacts -name "*.zip" -exec unzip -o {} -d temp_unzip \;
+          
+          # 3. DEBUG: Show us what was inside the zip (Check logs if this fails again)
+          echo "=== Content of Zip Files ==="
+          ls -R temp_unzip
+          
+          # 4. FLATTEN: Find any .woff2/.woff files recursively and move them to dist/
+          #    This ignores folder structure and dumps all fonts into dist/
+          find temp_unzip -type f \( -name "*.woff2" -o -name "*.woff" \) -exec mv {} dist/ \;
+          
+          # 5. Verify dist folder isn't empty
+          echo "=== Final Dist Content ==="
+          ls -l dist
+          
+          # fail if dist is empty
+          if [ -z "$(ls -A dist)" ]; then
+             echo "Error: Dist folder is empty! No fonts found."
+             exit 1
           fi
-
-          echo "NPM_VERSION=$VERSION" >> $GITHUB_ENV
-          echo "NPM_TAG=$NPM_TAG" >> $GITHUB_ENV
 
 # ---------------------------------------------------------
       # 3. Configure package.json on the fly
