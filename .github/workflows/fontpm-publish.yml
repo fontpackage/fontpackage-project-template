@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://npm.pkg.github.com/'
-          scope: '@YOUR-USERNAME' # <--- REPLACE THIS
+          scope: '@YOUR-USERNAME'
 
       - name: Download Artifacts
         uses: actions/download-artifact@v4
@@ -39,7 +39,7 @@ jobs:
           echo "=== Moving Font Files ==="
           find temp_artifacts -type f \( -name "*.woff2" -o -name "*.woff" -o -name "*.ttf" -o -name "*.otf" \) -exec mv -v {} dist/ \;
           
-          # Copy License if it exists in the root
+          # Copy License if it exists
           [ -f "OFL.txt" ] && cp OFL.txt dist/ || echo "OFL.txt not found"
 
           if [ -z "$(ls -A dist)" ]; then
@@ -90,19 +90,18 @@ jobs:
           for file in dist/*.woff2; do
             filename=$(basename "$file" .woff2)
             cat <<EOF >> index.css
-@font-face {
-  font-family: "${filename}";
-  src: url("./dist/${filename}.woff2") format("woff2");
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-EOF
+          @font-face {
+            font-family: "${filename}";
+            src: url("./dist/${filename}.woff2") format("woff2");
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
+          }
+          EOF
           done
 
       - name: Publish to GitHub Packages
         if: env.SKIP != 'true'
-        # Remove --dry-run once verified
         run: npm publish --tag ${{ env.NPM_TAG }} --dry-run
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
