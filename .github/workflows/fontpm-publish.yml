@@ -1,6 +1,5 @@
 name: Publish to NPM
 
-# Trigger this workflow ONLY after the "Build font and specimen" workflow completes
 on:
   workflow_run:
     workflows: ["Build font and specimen"]
@@ -13,7 +12,6 @@ permissions:
 
 jobs:
   npm-publish:
-    # Only run if the build was successful
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     
@@ -26,13 +24,8 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://npm.pkg.github.com/'
-          scope: '@YOUR-USERNAME' # <--- REPLACE THIS WITH YOUR GITHUB USERNAME
+          scope: '@YOUR-USERNAME' # <--- REPLACE THIS
 
-      # ---------------------------------------------------------
-      # 1. Download Artifacts
-      # ---------------------------------------------------------
-      # This downloads everything the build produced into a folder.
-      # It automatically unzips them.
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -40,112 +33,62 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: ./temp_artifacts
 
-      # ---------------------------------------------------------
-      # 2. Prepare Distribution Folder (The Fix)
-      # ---------------------------------------------------------
       - name: Prepare Distribution Folder
         run: |
-          # Create a clean dist folder
           mkdir -p dist
-
-          # DEBUG: List what we downloaded so we can see the structure in logs
-          echo "=== Raw Artifacts Content ==="
-          ls -R temp_artifacts
-
-          # FLATTEN: Find any font file recursively and move it to dist/
-          # This ignores any nested folder structure created by the zip
           echo "=== Moving Font Files ==="
           find temp_artifacts -type f \( -name "*.woff2" -o -name "*.woff" -o -name "*.ttf" -o -name "*.otf" \) -exec mv -v {} dist/ \;
+          
+          # Copy License if it exists in the root
+          [ -f "OFL.txt" ] && cp OFL.txt dist/ || echo "OFL.txt not found"
 
-          # Verify dist folder isn't empty
-          echo "=== Final Dist Content ==="
-          ls -l dist
-
-          # Hard Fail if dist is empty
           if [ -z "$(ls -A dist)" ]; then
-             echo "Error: Dist folder is empty! No fonts found in artifacts."
+             echo "Error: No fonts found!"
              exit 1
           fi
 
-      # ---------------------------------------------------------
-      # 3. Determine Channel & Version
-      # ---------------------------------------------------------
       - name: Set Version and Channel
         id: meta
         run: |
-          # We must use workflow_run data, not github.ref (which would be 'main' of this action)
           REF_NAME=${{ github.event.workflow_run.head_branch }}
           SHA_SHORT=$(echo ${{ github.event.workflow_run.head_sha }} | cut -c1-7)
           DATE_STR=$(date +'%Y%m%d')
 
-          echo "Detected Ref: $REF_NAME"
-
           if [[ "$REF_NAME" == v* ]]; then
-            # --- STABLE CHANNEL (Tagged v1.0.0) ---
             VERSION=${REF_NAME#v}
             NPM_TAG="latest"
-            echo "Channel: Stable"
-          
           elif [[ "$REF_NAME" == "main" ]]; then
-            # --- NIGHTLY CHANNEL (Main Branch) ---
             VERSION="0.0.0-nightly-$DATE_STR"
             NPM_TAG="nightly"
-            echo "Channel: Nightly"
-
           elif [[ "$REF_NAME" == "dev" ]]; then
-            # --- DEV CHANNEL (Dev Branch) ---
             VERSION="0.0.0-dev-$SHA_SHORT"
             NPM_TAG="dev"
-            echo "Channel: Dev"
-
           else
-            echo "Skipping publish for ref: $REF_NAME"
             echo "SKIP=true" >> $GITHUB_ENV
             exit 0
           fi
-
           echo "NPM_VERSION=$VERSION" >> $GITHUB_ENV
           echo "NPM_TAG=$NPM_TAG" >> $GITHUB_ENV
 
-      # ---------------------------------------------------------
-      # 4. Configure package.json on the fly
-      # ---------------------------------------------------------
       - name: Configure Package
         if: env.SKIP != 'true'
         run: |
-          # 1. Create a fresh package.json
-          # REPLACE @YOUR-USERNAME BELOW WITH YOUR ACTUAL USERNAME
           npm init -y --scope=@YOUR-USERNAME
-          
-          # 2. Configure necessary fields
           npm pkg set description="Open source font build"
           npm pkg set main="index.css"
           npm pkg set style="index.css"
-          
-          # 3. Tell npm explicitly to include our dist folder
           npm pkg set files[]="dist"
           npm pkg set files[]="index.css"
-          
-          # 4. Set the registry
           npm pkg set publishConfig.registry="https://npm.pkg.github.com/"
-
-          # 5. Set the computed version
           npm version ${{ env.NPM_VERSION }} --no-git-tag-version --allow-same-version
 
-    # ---------------------------------------------------------
-      # 5. Generate CSS
-      # ---------------------------------------------------------
       - name: Generate CSS
         if: env.SKIP != 'true'
         run: |
           echo "/* Auto-generated font face */" > index.css
-          
-          # Use a safer loop that handles empty folders and quote escaping
           shopt -s nullglob
           for file in dist/*.woff2; do
             filename=$(basename "$file" .woff2)
-            
-            # Use cat with a quoted heredoc to write the CSS safely
             cat <<EOF >> index.css
 @font-face {
   font-family: "${filename}";
@@ -156,6 +99,10 @@ jobs:
 }
 EOF
           done
-          
-          echo "=== Generated index.css ==="
-          cat index.css
+
+      - name: Publish to GitHub Packages
+        if: env.SKIP != 'true'
+        # Remove --dry-run once verified
+        run: npm publish --tag ${{ env.NPM_TAG }} --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
