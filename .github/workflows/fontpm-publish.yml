@@ -132,14 +132,30 @@ jobs:
           # 5. Set the computed version
           npm version ${{ env.NPM_VERSION }} --no-git-tag-version --allow-same-version
 
-      # ---------------------------------------------------------
+    # ---------------------------------------------------------
       # 5. Generate CSS
       # ---------------------------------------------------------
       - name: Generate CSS
         if: env.SKIP != 'true'
         run: |
-           echo "/* Auto-generated font face */" > index.css
-           # Loop through files in dist and append simple @font-face rules
-           for file in dist/*.woff2; do
-             filename=$(basename "$file" .woff2)
-             echo "@font-face { font-family: '$
+          echo "/* Auto-generated font face */" > index.css
+          
+          # Use a safer loop that handles empty folders and quote escaping
+          shopt -s nullglob
+          for file in dist/*.woff2; do
+            filename=$(basename "$file" .woff2)
+            
+            # Use cat with a quoted heredoc to write the CSS safely
+            cat <<EOF >> index.css
+@font-face {
+  font-family: "${filename}";
+  src: url("./dist/${filename}.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+EOF
+          done
+          
+          echo "=== Generated index.css ==="
+          cat index.css
